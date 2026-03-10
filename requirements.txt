@@ -2,3 +2,6 @@ selenium
 webdriver-manager
 pandas
 beautifulsoup4
+matplotlib
+seaborn
+ipykernel
