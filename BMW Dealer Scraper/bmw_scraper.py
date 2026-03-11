@@ -176,17 +176,26 @@ def parse_detail(driver) -> dict:
             el = driver.find_element(By.XPATH, xp)
             href = el.get_attribute("href") or ""
             val = href.replace("tel:", "") if href.startswith("tel:") else el.text.replace("Telefon:", "")
-            out["phone"] = val.strip()
+            # Using a leading space to trick Excel into treating this as text
+            out["phone"] = " " + val.strip() if val.strip() else ""
             if out["phone"]:
                 break
         except NoSuchElementException:
             continue
 
     try:
-        el = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Fax') and not(ancestor::nav) and not(ancestor::footer)]")
-        out["fax"] = el.text.replace("Fax:", "").strip()
-    except NoSuchElementException:
+        # Improved Fax search: look for elements containing 'Fax' then find a phone-like pattern in the container
+        fax_labels = driver.find_elements(By.XPATH, "//*[contains(text(),'Fax') and not(ancestor::nav) and not(ancestor::footer)]")
+        for label in fax_labels:
+            # Check the element itself and its parent for the actual number
+            container_text = label.find_element(By.XPATH, "./..").text
+            # Regex for international phone/fax numbers
+            match = re.search(r"Fax[:\s]*([\+\d\s\-\.\(\)/]{7,})", container_text, re.IGNORECASE)
+            if match:
+                fax_val = match.group(1).strip()
+                out["fax"] = " " + fax_val # Leading space for Excel
+                break
+    except Exception:
         pass
 
     try:
@@ -196,11 +205,25 @@ def parse_detail(driver) -> dict:
         pass
 
     try:
-        for a in driver.find_elements(By.XPATH, "//a[starts-with(@href,'http')]"):
+        blacklist = ["facebook.com", "instagram.com", "youtube.com", "twitter.com", "linkedin.com", "here.com", "google.com"]
+        links = driver.find_elements(By.XPATH, "//a[starts-with(@href,'http')]")
+        
+        # Priority 1: Link text contains "Website besuchen"
+        for a in links:
+            txt = a.text.lower()
             href = a.get_attribute("href") or ""
-            if "bmw" not in href and "here.com" not in href and len(href) > 10:
-                out["website"] = href
-                break
+            if "website besuchen" in txt:
+                if not any(b in href.lower() for b in blacklist):
+                    out["website"] = href
+                    break
+        
+        # Priority 2: Any link not in blacklist and not containing 'bmw' in a way that suggests it's the main site
+        if not out["website"]:
+            for a in links:
+                href = a.get_attribute("href") or ""
+                if len(href) > 12 and not any(b in href.lower() for b in blacklist) and "bmw.de" not in href:
+                    out["website"] = href
+                    break
     except Exception:
         pass
 
