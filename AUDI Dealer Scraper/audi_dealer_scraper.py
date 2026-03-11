@@ -34,8 +34,6 @@ class AudiDealer:
     address: str = ""
     phone: str = ""
     email: str = ""
-    services: str = ""
-    distance_km: str = ""
 
 
 def build_driver(headless: bool = False) -> webdriver.Chrome:
@@ -297,68 +295,38 @@ def get_dealer_list_items(driver: webdriver.Chrome) -> list:
     return []
 
 
-def get_distance_from_card(item) -> str:
-    for sel in [
-        "span[class*='SearchResultsEntry__Distance']",
-        "div[class*='distance']",
-        "[class*='km']",
-        "span[class*='info']",
-    ]:
-        try:
-            el = item.find_element(By.CSS_SELECTOR, sel)
-            text = el.text.strip()
-            if text and any(char.isdigit() for char in text):
-                return text
-        except NoSuchElementException:
-            continue
-    return ""
+
 
 
 def scrape_dealer_detail(driver: webdriver.Chrome) -> AudiDealer:
-    """Scrape the detail panel (name, address, phone, email, services)."""
+    """Scrape the detail panel (name, address, phone, email)."""
     dealer = AudiDealer()
     time.sleep(2)
 
+    # Use more specific selectors for the name within the detail container
     name_selectors = [
-        "h2[class*='SearchResultsEntry__DealerCardName']",
-        "p[class*='SearchResultsEntry__DealerCardName']",
+        "h1[class*='SearchResultsEntryDetail__DealerName']",
+        "h2[class*='SearchResultsEntryDetail__DealerName']",
+        "div[class*='DealerDetailsContainer'] h1",
+        "div[class*='DealerDetailsContainer'] h2",
         "h2",
         "h1"
     ]
     for sel in name_selectors:
         text = safe_text(driver, By.CSS_SELECTOR, sel)
-        if text and len(text) > 3 and "Zurück" not in text and "Partner Details" not in text:
+        if text and len(text) > 3 and all(x not in text for x in ["Zurück", "Partner Details", "Händlersuche"]):
             dealer.name = text
             break
    
     if not dealer.name:
         try:
-            container = driver.find_element(By.CSS_SELECTOR, ".DesktopDealerDetails__DealerDetailsContainer-sc-d70ec307-0")
+            container = driver.find_element(By.CSS_SELECTOR, "[class*='DealerDetailsContainer']")
             lines = [line.strip() for line in container.text.split('\n') if line.strip()]
-            filtered = [l for l in lines if "Zurück" not in l and "Partner Details" not in l]
+            filtered = [l for l in lines if all(x not in l for x in ["Zurück", "Partner Details", "Händlersuche"])]
             if filtered:
                 dealer.name = filtered[0]
         except Exception:
             pass
-
-    tag_selectors = [
-        "li[class*='ServiceItem']",
-        "span[class*='Badge']",
-        "span[class*='Tag']",
-        "div[class*='ServiceList'] p",
-        "span[class*='Service']",
-    ]
-    all_tags = []
-    for sel in tag_selectors:
-        elements = driver.find_elements(By.CSS_SELECTOR, sel)
-        for el in elements:
-            t = el.text.strip()
-            if t and t not in all_tags and len(t) < 40:
-                all_tags.append(t)
-    
-    if all_tags:
-        dealer.services = ", ".join(all_tags)
-
 
     for sel in ["a[href*='maps/dir/']", "[class*='address']", "address"]:
         text = safe_text(driver, By.CSS_SELECTOR, sel)
@@ -384,7 +352,6 @@ def scrape_dealer_detail(driver: webdriver.Chrome) -> AudiDealer:
     log.info(f"  Address : {dealer.address}")
     log.info(f"  Phone   : {dealer.phone}")
     log.info(f"  Email   : {dealer.email}")
-    log.info(f"  Services: {dealer.services}")
     return dealer
 
 
@@ -467,7 +434,6 @@ def scrape(location: str, output: str, headless: bool = False):
                 break
 
             item = items[i]
-            distance = get_distance_from_card(item)
 
             try:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", item)
@@ -491,7 +457,6 @@ def scrape(location: str, output: str, headless: bool = False):
 
 
             dealer = scrape_dealer_detail(driver)
-            dealer.distance_km = distance
             dealers.append(dealer)
 
 
