@@ -1,4 +1,4 @@
-import re, time, csv, os, argparse, logging
+import re, time, csv, os, argparse, logging, requests
 from dataclasses import dataclass, fields, asdict
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -18,17 +18,57 @@ log = logging.getLogger(__name__)
 URL = "https://www.bmw.de/de/fastlane/dealer-locator.html"
 CHROME_RESTART_EVERY = 20  
 
+def load_env(filepath):
+    """Simple helper to load .env variables without python-dotenv."""
+    env = {}
+    if os.path.exists(filepath):
+        with open(filepath, 'r') as f:
+            for line in f:
+                if '=' in line and not line.startswith('#'):
+                    key, value = line.strip().split('=', 1)
+                    env[key.strip()] = value.strip()
+    return env
+
+# Global API Key
+env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+if not os.path.exists(env_path):
+    env_path = ".env"
+config = load_env(env_path)
+API_KEY = config.get("GOOGLE_MAPS_API_KEY")
+
+def geocode_address(street, zip_code, city):
+    """Fetches latitude and longitude from Google Maps Geocoding API."""
+    if not API_KEY:
+        return None, None
+        
+    full_address = f"{street}, {zip_code} {city}, Germany"
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {"address": full_address, "key": API_KEY, "region": "de"}
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        if data["status"] == "OK":
+            loc = data["results"][0]["geometry"]["location"]
+            return loc["lat"], loc["lng"]
+    except Exception:
+        pass
+    return None, None
+
 
 @dataclass
 class Dealer:
     name: str = ""
     street: str = ""
+    zip_code: str = ""
     city: str = ""
     distance_km: str = ""
     phone: str = ""
     fax: str = ""
     email: str = ""
     website: str = ""
+    latitude: float = None
+    longitude: float = None
 
 def build_driver(headless=False):
     opts = Options()
@@ -137,14 +177,19 @@ def get_cards(driver):
 
 
 def parse_label(el) -> dict:
-    out = {"name": "", "street": "", "city": "", "distance_km": ""}
+    out = {"name": "", "street": "", "zip_code": "", "city": "", "distance_km": ""}
     try:
         lines = [l.strip() for l in el.text.strip().split("\n") if l.strip()]
         for line in lines:
             if "km" in line and len(line) < 15 and not out["distance_km"]:
                 out["distance_km"] = line
             elif re.match(r"^\d{5}\s", line) and not out["city"]:
-                out["city"] = line
+                match = re.match(r"^(\d{5})\s+(.*)$", line)
+                if match:
+                    out["zip_code"] = match.group(1)
+                    out["city"] = match.group(2)
+                else:
+                    out["city"] = line
             elif re.search(r"\d", line) and not out["street"] and out["name"]:
                 out["street"] = line
             elif not out["name"] and "km" not in line:
@@ -296,6 +341,11 @@ def scrape_dealer(driver, city: str, idx: int, info: dict,
             info = {k: fresh[k] or info[k] for k in info}
     except Exception:
         pass
+
+    # New: Geocoding
+    lat, lng = geocode_address(info.get("street", ""), info.get("zip_code", ""), info.get("city", ""))
+    contact["latitude"] = lat
+    contact["longitude"] = lng
 
     return Dealer(**info, **contact), cookies_accepted
 
